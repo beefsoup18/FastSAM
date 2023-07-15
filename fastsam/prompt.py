@@ -4,9 +4,8 @@ import cv2
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
+from .utils import image_to_np_ndarray
 from PIL import Image
-
-
 
 try:
     import clip  # for linear_assignment
@@ -20,15 +19,18 @@ except (ImportError, AssertionError, AttributeError):
 
 class FastSAMPrompt:
 
-    def __init__(self, img_path, results, device='cuda') -> None:
-        # self.img_path = img_path
+    def __init__(self, image, results, device='cuda'):
+        if isinstance(image, str) or isinstance(image, Image.Image):
+            image = image_to_np_ndarray(image)
         self.device = device
         self.results = results
-        self.img_path = img_path
-        self.ori_img = cv2.imread(img_path)
-
+        self.img = image
+    
     def _segment_image(self, image, bbox):
-        image_array = np.array(image)
+        if isinstance(image, Image.Image):
+            image_array = np.array(image)
+        else:
+            image_array = image
         segmented_image_array = np.zeros_like(image_array)
         x1, y1, x2, y2 = bbox
         segmented_image_array[y1:y2, x1:x2] = image_array[y1:y2, x1:x2]
@@ -90,20 +92,18 @@ class FastSAMPrompt:
             w = x2 - x1
         return [x1, y1, x2, y2]
 
-    def plot(self,
+    def plot_to_result(self,
              annotations,
-             output,
-             bbox=None,
+             bboxes=None,
              points=None,
              point_label=None,
              mask_random_color=True,
              better_quality=True,
              retina=False,
-             withContours=True):
+             withContours=True) -> np.ndarray:
         if isinstance(annotations[0], dict):
             annotations = [annotation['segmentation'] for annotation in annotations]
-        result_name = os.path.basename(self.img_path)
-        image = self.ori_img
+        image = self.img
         image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
         original_h = image.shape[0]
         original_w = image.shape[1]
@@ -129,7 +129,7 @@ class FastSAMPrompt:
                 annotations,
                 plt.gca(),
                 random_color=mask_random_color,
-                bbox=bbox,
+                bboxes=bboxes,
                 points=points,
                 pointlabel=point_label,
                 retinamask=retina,
@@ -143,7 +143,7 @@ class FastSAMPrompt:
                 annotations,
                 plt.gca(),
                 random_color=mask_random_color,
-                bbox=bbox,
+                bboxes=bboxes,
                 points=points,
                 pointlabel=point_label,
                 retinamask=retina,
@@ -173,9 +173,6 @@ class FastSAMPrompt:
             contour_mask = temp / 255 * color.reshape(1, 1, -1)
             plt.imshow(contour_mask)
 
-        save_path = output
-        if not os.path.exists(save_path):
-            os.makedirs(save_path)
         plt.axis('off')
         fig = plt.gcf()
         plt.draw()
@@ -187,15 +184,44 @@ class FastSAMPrompt:
             buf = fig.canvas.tostring_rgb()
         cols, rows = fig.canvas.get_width_height()
         img_array = np.frombuffer(buf, dtype=np.uint8).reshape(rows, cols, 3)
-        cv2.imwrite(os.path.join(save_path, result_name), cv2.cvtColor(img_array, cv2.COLOR_RGB2BGR))
+        result = cv2.cvtColor(img_array, cv2.COLOR_RGB2BGR)
+        plt.close()
+        return result
+            
+    # Remark for refactoring: IMO a function should do one thing only, storing the image and plotting should be seperated and do not necessarily need to be class functions but standalone utility functions that the user can chain in his scripts to have more fine-grained control. 
+    def plot(self,
+             annotations,
+             output_path,
+             bboxes=None,
+             points=None,
+             point_label=None,
+             mask_random_color=True,
+             better_quality=True,
+             retina=False,
+             withContours=True):
+        result = self.plot_to_result(
+            annotations, 
+            bboxes, 
+            points, 
+            point_label, 
+            mask_random_color,
+            better_quality, 
+            retina, 
+            withContours,
+        )
 
+        path = os.path.dirname(os.path.abspath(output_path))
+        if not os.path.exists(path):
+            os.makedirs(path)
+        cv2.imwrite(output_path, result)
+     
     #   CPU post process
     def fast_show_mask(
         self,
         annotation,
         ax,
         random_color=False,
-        bbox=None,
+        bboxes=None,
         points=None,
         pointlabel=None,
         retinamask=True,
@@ -224,9 +250,10 @@ class FastSAMPrompt:
         indices = (index[h_indices, w_indices], h_indices, w_indices, slice(None))
         # Use vectorized indexing to update the values of 'show'.
         show[h_indices, w_indices, :] = mask_image[indices]
-        if bbox is not None:
-            x1, y1, x2, y2 = bbox
-            ax.add_patch(plt.Rectangle((x1, y1), x2 - x1, y2 - y1, fill=False, edgecolor='b', linewidth=1))
+        if bboxes is not None:
+            for bbox in bboxes:
+                x1, y1, x2, y2 = bbox
+                ax.add_patch(plt.Rectangle((x1, y1), x2 - x1, y2 - y1, fill=False, edgecolor='b', linewidth=1))
         # draw point
         if points is not None:
             plt.scatter(
@@ -251,7 +278,7 @@ class FastSAMPrompt:
         annotation,
         ax,
         random_color=False,
-        bbox=None,
+        bboxes=None,
         points=None,
         pointlabel=None,
         retinamask=True,
@@ -276,14 +303,18 @@ class FastSAMPrompt:
         mask_image = torch.unsqueeze(annotation, -1) * visual
         # Select data according to the index. The index indicates which batch's data to choose at each position, converting the mask_image into a single batch form.
         show = torch.zeros((height, weight, 4)).to(annotation.device)
-        h_indices, w_indices = torch.meshgrid(torch.arange(height), torch.arange(weight), indexing='ij')
+        try:
+            h_indices, w_indices = torch.meshgrid(torch.arange(height), torch.arange(weight), indexing='ij')
+        except:
+            h_indices, w_indices = torch.meshgrid(torch.arange(height), torch.arange(weight))
         indices = (index[h_indices, w_indices], h_indices, w_indices, slice(None))
         # Use vectorized indexing to update the values of 'show'.
         show[h_indices, w_indices, :] = mask_image[indices]
         show_cpu = show.cpu().numpy()
-        if bbox is not None:
-            x1, y1, x2, y2 = bbox
-            ax.add_patch(plt.Rectangle((x1, y1), x2 - x1, y2 - y1, fill=False, edgecolor='b', linewidth=1))
+        if bboxes is not None:
+            for bbox in bboxes:
+                x1, y1, x2, y2 = bbox
+                ax.add_patch(plt.Rectangle((x1, y1), x2 - x1, y2 - y1, fill=False, edgecolor='b', linewidth=1))
         # draw point
         if points is not None:
             plt.scatter(
@@ -317,7 +348,7 @@ class FastSAMPrompt:
 
     def _crop_image(self, format_results):
 
-        image = Image.fromarray(cv2.cvtColor(self.ori_img, cv2.COLOR_BGR2RGB))
+        image = Image.fromarray(cv2.cvtColor(self.img, cv2.COLOR_BGR2RGB))
         ori_w, ori_h = image.size
         annotations = format_results
         mask_h, mask_w = annotations[0]['segmentation'].shape
@@ -340,42 +371,47 @@ class FastSAMPrompt:
 
         return cropped_boxes, cropped_images, not_crop, filter_id, annotations
 
-    def box_prompt(self, bbox):
+    def box_prompt(self, bbox=None, bboxes=None):
 
-        assert (bbox[2] != 0 and bbox[3] != 0)
-        masks = self.results[0].masks.data
-        target_height = self.ori_img.shape[0]
-        target_width = self.ori_img.shape[1]
-        h = masks.shape[1]
-        w = masks.shape[2]
-        if h != target_height or w != target_width:
-            bbox = [
-                int(bbox[0] * w / target_width),
-                int(bbox[1] * h / target_height),
-                int(bbox[2] * w / target_width),
-                int(bbox[3] * h / target_height), ]
-        bbox[0] = round(bbox[0]) if round(bbox[0]) > 0 else 0
-        bbox[1] = round(bbox[1]) if round(bbox[1]) > 0 else 0
-        bbox[2] = round(bbox[2]) if round(bbox[2]) < w else w
-        bbox[3] = round(bbox[3]) if round(bbox[3]) < h else h
+        assert bbox or bboxes
+        if bboxes is None:
+            bboxes = [bbox]
+        max_iou_index = []
+        for bbox in bboxes:
+            assert (bbox[2] != 0 and bbox[3] != 0)
+            masks = self.results[0].masks.data
+            target_height = self.img.shape[0]
+            target_width = self.img.shape[1]
+            h = masks.shape[1]
+            w = masks.shape[2]
+            if h != target_height or w != target_width:
+                bbox = [
+                    int(bbox[0] * w / target_width),
+                    int(bbox[1] * h / target_height),
+                    int(bbox[2] * w / target_width),
+                    int(bbox[3] * h / target_height), ]
+            bbox[0] = round(bbox[0]) if round(bbox[0]) > 0 else 0
+            bbox[1] = round(bbox[1]) if round(bbox[1]) > 0 else 0
+            bbox[2] = round(bbox[2]) if round(bbox[2]) < w else w
+            bbox[3] = round(bbox[3]) if round(bbox[3]) < h else h
 
-        # IoUs = torch.zeros(len(masks), dtype=torch.float32)
-        bbox_area = (bbox[3] - bbox[1]) * (bbox[2] - bbox[0])
+            # IoUs = torch.zeros(len(masks), dtype=torch.float32)
+            bbox_area = (bbox[3] - bbox[1]) * (bbox[2] - bbox[0])
 
-        masks_area = torch.sum(masks[:, bbox[1]:bbox[3], bbox[0]:bbox[2]], dim=(1, 2))
-        orig_masks_area = torch.sum(masks, dim=(1, 2))
+            masks_area = torch.sum(masks[:, bbox[1]:bbox[3], bbox[0]:bbox[2]], dim=(1, 2))
+            orig_masks_area = torch.sum(masks, dim=(1, 2))
 
-        union = bbox_area + orig_masks_area - masks_area
-        IoUs = masks_area / union
-        max_iou_index = torch.argmax(IoUs)
-
-        return np.array([masks[max_iou_index].cpu().numpy()])
+            union = bbox_area + orig_masks_area - masks_area
+            IoUs = masks_area / union
+            max_iou_index.append(int(torch.argmax(IoUs)))
+        max_iou_index = list(set(max_iou_index))
+        return np.array(masks[max_iou_index].cpu().numpy())
 
     def point_prompt(self, points, pointlabel):  # numpy 
 
         masks = self._format_results(self.results[0], 0)
-        target_height = self.ori_img.shape[0]
-        target_width = self.ori_img.shape[1]
+        target_height = self.img.shape[0]
+        target_width = self.img.shape[1]
         h = masks[0]['segmentation'].shape[0]
         w = masks[0]['segmentation'].shape[1]
         if h != target_height or w != target_width:
@@ -407,3 +443,4 @@ class FastSAMPrompt:
 
     def everything_prompt(self):
         return self.results[0].masks.data
+        

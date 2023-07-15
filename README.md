@@ -6,12 +6,13 @@
 
 ![FastSAM Speed](assets/head_fig.png)
 
-The **Fast Segment Anything Model(FastSAM)** is a CNN Segment Anything Model trained by only 2% of the SA-1B dataset published by SAM authors. The FastSAM achieve a comparable performance with
+The **Fast Segment Anything Model(FastSAM)** is a CNN Segment Anything Model trained using only 2% of the SA-1B dataset published by SAM authors. FastSAM achieves comparable performance with
 the SAM method at **50× higher run-time speed**.
 
 ![FastSAM design](assets/Overview.png)
 
 **🍇 Updates**
+- **`2023/07/06`** Added to [Ultralytics (YOLOv8) Model Hub](https://docs.ultralytics.com/models/fast-sam/). Thanks to [Ultralytics](https://github.com/ultralytics/ultralytics) for help 🌹.
 - **`2023/06/29`** Support [text mode](https://huggingface.co/spaces/An-619/FastSAM) in HuggingFace Space. Thanks a lot to [gaoxinge](https://github.com/gaoxinge) for help 🌹.
 - **`2023/06/29`** Release [FastSAM_Awesome_TensorRT](https://github.com/ChuRuaNh0/FastSam_Awsome_TensorRT). Thanks a lot to [ChuRuaNh0](https://github.com/ChuRuaNh0) for providing the TensorRT model of FastSAM 🌹.
 - **`2023/06/26`** Release [FastSAM Replicate Online Demo](https://replicate.com/casia-iva-lab/fastsam). Thanks a lot to [Chenxi](https://chenxwh.github.io/) for providing this nice demo 🌹.
@@ -64,7 +65,7 @@ python Inference.py --model_path ./weights/FastSAM.pt --img_path ./images/dogs.j
 
 ```shell
 # Box prompt (xywh)
-python Inference.py --model_path ./weights/FastSAM.pt --img_path ./images/dogs.jpg --box_prompt "[570,200,230,400]"
+python Inference.py --model_path ./weights/FastSAM.pt --img_path ./images/dogs.jpg --box_prompt "[[570,200,230,400]]"
 ```
 
 ```shell
@@ -86,7 +87,7 @@ prompt_process = FastSAMPrompt(IMAGE_PATH, everything_results, device=DEVICE)
 ann = prompt_process.everything_prompt()
 
 # bbox default shape [0,0,0,0] -> [x1,y1,x2,y2]
-ann = prompt_process.box_prompt(bbox=[200, 200, 300, 300])
+ann = prompt_process.box_prompt(bbox=[[200, 200, 300, 300]])
 
 # text prompt
 ann = prompt_process.text_prompt(text='a photo of a dog')
@@ -109,7 +110,7 @@ We provide various options for different purposes, details are in [MORE_USAGES.m
 
 ### Gradio demo
 
-- We also provide a UI for testing our method that is built with gradio. You can upload a custom image, select the mode and set the parameters, click the segment button, and get a satisfactory segmentation result. Everything mode and points mode are now supported for interaction, other modes will try to support in the future. Running the following command in a terminal will launch the demo:
+- We also provide a UI for testing our method that is built with gradio. You can upload a custom image, select the mode and set the parameters, click the segment button, and get a satisfactory segmentation result. Currently, the UI supports interaction with the 'Everything mode' and 'points mode'. We plan to add support for additional modes in the future. Running the following command in a terminal will launch the demo:
 
 ```
 # Download the pre-trained model in "./weights/FastSAM.pt"
